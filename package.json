@@ -1,6 +1,6 @@
 {
   "name": "@dlgoodchild/verifactu-ts",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A project-agnostic TypeScript client for Spain's VERI*FACTU invoice-verification scheme (AEAT): records, hash chain, SOAP web service, QR codes, signing and event log.",
   "keywords": [
     "verifactu",
