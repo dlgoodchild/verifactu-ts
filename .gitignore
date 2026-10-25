@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+*.tsbuildinfo
+*.tgz
+.DS_Store
+.idea
+/.env
+examples/sample/.env
+examples/sample/state.json
+examples/sample/out
