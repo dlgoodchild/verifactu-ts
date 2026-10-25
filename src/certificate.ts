@@ -141,3 +141,22 @@ function localKeyId(attributes: forge.pkcs12.Bag['attributes'] | undefined): str
   const value = attributes?.localKeyId?.[0]
   return typeof value === 'string' ? forge.util.bytesToHex(value) : undefined
 }
+
+/** A PKCS#12 bundle converted to PEM */
+export interface PemCertificate {
+  /** The certificate and the authorities in the bundle that issued it, leaf first */
+  cert: string
+  /** The private key, unencrypted */
+  key: string
+}
+
+/**
+ * Converts a PKCS#12 bundle to PEM, the form Node's TLS (OpenSSL 3) can always read. Bundles protected with legacy
+ * algorithms (RC2/3DES), as many from Spanish certificate authorities are, are refused by OpenSSL 3 as a `pfx`. The
+ * result works as `{ cert, key }` in a `ClientCertificate`. The `verifactu p12-to-pem` command does this for a file.
+ */
+export function pkcs12ToPem(pfx: Buffer | string, passphrase?: string): PemCertificate {
+  const { chain, privateKeyPem } = openPkcs12(pfx, passphrase)
+  if (!privateKeyPem) throw new VerifactuConfigurationError('The PKCS#12 bundle holds no private key')
+  return { cert: chain.map((certificate) => forge.pki.certificateToPem(certificate)).join(''), key: privateKeyPem }
+}

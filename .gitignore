@@ -9,3 +9,6 @@ coverage
 examples/sample/.env
 examples/sample/state.json
 examples/sample/out
+*.p12
+*.pfx
+*.pem

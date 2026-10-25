@@ -12,16 +12,14 @@
  * validation service whether it can see the invoice. The end of the chain is kept in `state.json` (a real application
  * keeps it in its database); delete that file to start a new chain.
  */
-import dotenv from 'dotenv'
 import fs from 'fs'
 import path from 'path'
 import {
   VerifactuClient, VerifactuError, VerifactuSoapFaultError, buildQrUrl, chainLinkOf, createCancellationRecord, createInvoiceRecord, daysUntilExpiry, generateQrPng,
   isoDateOf, qrTexts, readCertificateInfo, verifyInvoice
 } from '~/index'
-import type { ChainLink, ClientCertificate, InvoiceId, SoftwareSystem, SubmissionHeader } from '~/index'
-
-dotenv.config({ path: path.join(__dirname, '.env') })
+import { loadCertificate, required } from './common'
+import type { ChainLink, InvoiceId, SoftwareSystem, SubmissionHeader } from '~/index'
 
 const StateFile = path.join(__dirname, 'state.json')
 const OutDir = path.join(__dirname, 'out')
@@ -31,24 +29,6 @@ interface State {
   last?: ChainLink
   lastInvoice?: InvoiceId
   counter: number
-}
-
-function required(name: string): string {
-  const value = process.env[name]?.trim()
-  if (!value) throw new Error(`Set ${name} in ${path.join(__dirname, '.env')}`)
-  return value
-}
-
-/** The certificate from the file named by VERIFACTU_CERT_FILE if set, otherwise from the base64 in VERIFACTU_CERT_BASE64 */
-function loadCertificate(): ClientCertificate {
-  const passphrase = process.env.VERIFACTU_CERT_PASSWORD ?? ''
-  const file = process.env.VERIFACTU_CERT_FILE?.trim()
-  if (file) {
-    const location = path.isAbsolute(file) ? file : path.resolve(__dirname, file)
-    if (!fs.existsSync(location)) throw new Error(`VERIFACTU_CERT_FILE does not exist: ${location}`)
-    return { pfx: fs.readFileSync(location), passphrase }
-  }
-  return { pfx: Buffer.from(required('VERIFACTU_CERT_BASE64'), 'base64'), passphrase }
 }
 
 function loadState(): State {

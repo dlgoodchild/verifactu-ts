@@ -1,8 +1,8 @@
 # VERI*FACTU client
 
-A project-agnostic TypeScript client for Spain's VERI*FACTU invoicing system (AEAT, Real Decreto 1007/2023). It has no framework dependencies and runs on Node 18+.
+A project-agnostic TypeScript client for Spain's VERI*FACTU invoicing system (AEAT, Real Decreto 1007/2023). It has no framework dependencies and runs on Node 22+.
 
-**Contents:** [Background](#background) · [The two ways to comply](#the-two-ways-to-comply-and-what-this-library-covers) · [Setup](#setup) · [Test and production: accounts and certificates](#test-and-production-accounts-and-certificates) · [Quick start](#quick-start) · [Concepts](#concepts-you-need) · [Way 2: signing and the event log](#the-non-verifactu-way-signing-and-the-event-log) · [API reference](#api-reference) · [Recipes](#recipes) · [Errors](#errors) · [Testing](#testing) · [Not included](#not-included) · [References](#references)
+**Contents:** [Background](#background) · [The two ways to comply](#the-two-ways-to-comply-and-what-this-library-covers) · [Setup](#setup) · [Test and production: accounts and certificates](#test-and-production-accounts-and-certificates) · [OpenSSL 3 and FNMT `.p12` files](#node-openssl-3-and-fnmt-p12-files) · [Quick start](#quick-start) · [Concepts](#concepts-you-need) · [Way 2: signing and the event log](#the-non-verifactu-way-signing-and-the-event-log) · [API reference](#api-reference) · [Recipes](#recipes) · [Errors](#errors) · [Testing](#testing) · [Not included](#not-included) · [References](#references)
 
 ## Background
 
@@ -49,7 +49,7 @@ Way 2 is newer in this library than way 1 and has had less checking; see [its ca
 
 ## Setup
 
-**Requirements:** Node 18+. Install it:
+**Requirements:** Node 22+. Install it:
 
 ```sh
 npm install verifactu
@@ -175,6 +175,72 @@ This turns the certificate installed on your computer into one file the program 
 - FNMT's own help: *Exportación / Importación y Eliminación de un Certificado* (link below).
 
 If the export option is greyed out, the key is not exportable (see "Important for a server" above): request a new certificate through the software route.
+
+### Node, OpenSSL 3 and FNMT `.p12` files
+
+**The problem.** Node.js 17 and later ship with OpenSSL 3. OpenSSL 3 moved the older encryption algorithms used inside PKCS#12 files (notably RC2-40 and, depending on how the file was built, 3DES) into a "legacy" provider that is switched off by default. Many `.p12` files exported from Spanish certificate authorities, FNMT certificates included, are still protected with those algorithms. Node's TLS stack cannot open them, even with the correct password, and fails with:
+
+```
+Error: Unsupported PKCS12 PFX data
+```
+
+This library reports it as `VerifactuConfigurationError: The client certificate could not be read: Unsupported PKCS12 PFX data`. It shows up when sending (and in `new HttpsTransport(...)` / `new VerifactuClient(...)`), not when only reading the expiry date, because reading the expiry uses `node-forge`, which understands the old algorithms. So a "valid until..." line followed by this error is the typical symptom. The file and the password are fine; Node simply cannot decode that encryption.
+
+**What the library does by itself.** If Node rejects a `.p12`, `HttpsTransport` converts it in memory with `node-forge` when the transport is created (once, not per request) and carries on with PEM. A wrong password still fails with a clear message. You do not have to do anything, but converting the file once is cleaner: it is faster to start, and it works with any other tool that uses Node's TLS.
+
+**The permanent fix: convert the `.p12` to PEM once.** PEM files carry no legacy encryption, so every Node version reads them.
+
+```sh
+npx verifactu p12-to-pem certificate.p12
+```
+
+It asks for the `.p12` password (typing is hidden). To avoid the prompt, pass `-p <password>` or set `VERIFACTU_CERT_PASSWORD`. It writes two files next to the `.p12`:
+
+| File | Contents |
+|---|---|
+| `certificate.cert.pem` | Your certificate followed by the issuing authorities found in the bundle |
+| `certificate.key.pem` | The private key, **not encrypted**, created readable only by you (mode 600) |
+
+Options: `--out <directory>` to write somewhere else, `--force` to overwrite existing files, `--help`. Without `npx` (for example after `npm install -g`), run `verifactu p12-to-pem ...`.
+
+Then give the client the PEM files instead of the `.p12`:
+
+```ts
+import fs from 'fs'
+import { VerifactuClient } from 'verifactu'
+
+const client = new VerifactuClient({
+  certificate: {
+    cert: fs.readFileSync('certificate.cert.pem'),
+    key: fs.readFileSync('certificate.key.pem')
+  }
+  // ...the rest of your options
+})
+```
+
+The same `{ cert, key }` object works anywhere a `ClientCertificate` is accepted: `readCertificateInfo`, `createSigner`, and `HttpsTransport`.
+
+**Handle the key file carefully.** It is the private key of a qualified certificate, with no password on it. Keep it out of version control (add `*.pem` to `.gitignore`), do not bake it into images, and on a server restrict who can read it. If you need a password on it, keep using the `.p12` and let the library's in-memory conversion handle it.
+
+**In code.** The conversion is also available as a function, for example to convert at deploy time:
+
+```ts
+import { pkcs12ToPem } from 'verifactu'
+
+const { cert, key } = pkcs12ToPem(fs.readFileSync('certificate.p12'), password)
+```
+
+**Alternative: OpenSSL itself.** If you prefer the standard tool, OpenSSL 3 needs `-legacy` to open such a file:
+
+```sh
+openssl pkcs12 -in certificate.p12 -legacy -nodes -clcerts -nokeys -out certificate.cert.pem   # certificate only
+openssl pkcs12 -in certificate.p12 -legacy -nodes -nocerts -out certificate.key.pem
+chmod 600 certificate.key.pem
+```
+
+(Leave `-legacy` out on OpenSSL 1.1 or LibreSSL, which do not know it. Add the CA certificates separately if you want the chain; `verifactu p12-to-pem` includes them for you.)
+
+**Other workarounds, not recommended.** Running Node with `--openssl-legacy-provider`, or `NODE_OPTIONS=--openssl-legacy-provider`, re-enables the old algorithms process-wide. It weakens the process for everything, and some Node builds do not accept the flag. Re-exporting the certificate with a modern tool also works, but the PEM conversion above is simpler.
 
 ### Checking it works
 

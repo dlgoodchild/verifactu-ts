@@ -1,5 +1,6 @@
 import https from 'https'
 import tls from 'tls'
+import { pkcs12ToPem } from '~/certificate'
 import { VerifactuConfigurationError, VerifactuTransportError } from '~/errors'
 
 /**
@@ -77,7 +78,22 @@ export class HttpsTransport implements VerifactuTransport {
         tls.createSecureContext(material)
       }
       catch (error) {
-        throw new VerifactuConfigurationError(`The client certificate could not be read: ${(error as Error).message}`)
+        // OpenSSL 3 (Node 17+) refuses bundles protected with legacy algorithms (RC2/3DES), as many .p12 files from
+        // Spanish certificate authorities are ("Unsupported PKCS12 PFX data"). node-forge can read them, so convert
+        // the bundle to PEM and hand that to TLS instead.
+        if (!material.pfx) throw new VerifactuConfigurationError(`The client certificate could not be read: ${(error as Error).message}`)
+        try {
+          const pem = pkcs12ToPem(material.pfx as Buffer | string, material.passphrase)
+          delete material.pfx
+          delete material.passphrase
+          material.cert = pem.cert
+          material.key = pem.key
+          tls.createSecureContext(material)
+        }
+        catch (fallbackError) {
+          if (fallbackError instanceof VerifactuConfigurationError) throw fallbackError
+          throw new VerifactuConfigurationError(`The client certificate could not be read: ${(fallbackError as Error).message}`)
+        }
       }
     }
 

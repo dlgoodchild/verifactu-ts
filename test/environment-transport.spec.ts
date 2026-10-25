@@ -1,7 +1,10 @@
+import fs from 'fs'
 import http from 'http'
 import { AddressInfo } from 'net'
+import path from 'path'
 import { serviceUrl, validationBaseUrl, wsdlUrl } from '~/environment'
 import { VerifactuConfigurationError, VerifactuTransportError } from '~/errors'
+import { pkcs12ToPem } from '~/certificate'
 import { HttpsTransport } from '~/transport'
 import { CountryCodes, isCountryCode } from '~/country-codes'
 import { InvoiceTypes, OperationQualifications, OtherIdTypes, RegimeKeys } from '~/codes'
@@ -48,6 +51,21 @@ describe('code lists', () => {
 })
 
 describe('HttpsTransport', () => {
+  test('opens a legacy-encrypted .p12 that OpenSSL 3 rejects, such as those from Spanish certificate authorities', () => {
+    // Password-protected with RC2-40, which Node's TLS refuses ("Unsupported PKCS12 PFX data")
+    const pfx = fs.readFileSync(path.join(__dirname, 'fixtures', 'legacy-rc2.p12'))
+    const transport = new HttpsTransport({ certificate: { pfx, passphrase: 'secret' } })
+    transport.close()
+    expect(() => new HttpsTransport({ certificate: { pfx, passphrase: 'wrong' } })).toThrow('check the file and its password')
+  })
+
+  test('converts a legacy .p12 to PEM that TLS accepts', () => {
+    const pem = pkcs12ToPem(fs.readFileSync(path.join(__dirname, 'fixtures', 'legacy-rc2.p12')), 'secret')
+    expect(pem.cert).toContain('BEGIN CERTIFICATE')
+    expect(pem.key).toContain('PRIVATE KEY')
+    new HttpsTransport({ certificate: pem }).close()
+  })
+
   test('reports a certificate that cannot be read when it is created', () => {
     expect(() => new HttpsTransport({ certificate: { pfx: Buffer.from('garbage'), passphrase: 'x' } })).toThrow(VerifactuConfigurationError)
     expect(() => new HttpsTransport({ certificate: { passphrase: 'x' } })).toThrow('PKCS#12 bundle (pfx) or a PEM certificate and key')
